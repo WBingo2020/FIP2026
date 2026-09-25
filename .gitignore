@@ -1,0 +1,16 @@
+# 生成产物 / 验证图 / 预览（非源码，不进 PR）
+scripts/rba_models/
+_verify_*.png
+_verify_*.html
+平台预览*.html
+platform_interactive.html
+platform_preview*.html
+platform_preview*.png
+*.png
+!docs/**/*.png
+burden_calibration.csv
+.pytest_cache/
+
+# 本地技能下载缓存（非源码，不进 PR）
+_skills/
+_skills_dl/
