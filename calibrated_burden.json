@@ -1,0 +1,48 @@
+{
+  "schema": "fip.stageH.burden_calibration.v1",
+  "mode": "proxy_unvalidated",
+  "note": "real=由 RBApy 求解得到；proxy_unvalidated=沙箱无 Uniprot/求解器，由代理近似得到，需在有网络的机器用 --real-rba 复算后写回。",
+  "mu_wt": null,
+  "forms": {
+    "intracellular_soluble": {
+      "ib_frac": 0.1,
+      "burden_sol": 1.5,
+      "burden_ib": 1.5,
+      "tox_k": 0.004,
+      "rba_drop": 0.15254237288135594,
+      "fip_drop": 0.16614719111742604,
+      "resid": 0.013604818236070099,
+      "mu_het": null
+    },
+    "inclusion_body": {
+      "ib_frac": 0.85,
+      "burden_sol": 1.0,
+      "burden_ib": 1.0,
+      "tox_k": 0.0,
+      "rba_drop": 0.10714285714285712,
+      "fip_drop": 0.09135366022432574,
+      "resid": 0.01578919691853138,
+      "mu_het": null
+    },
+    "periplasmic": {
+      "ib_frac": 0.15,
+      "burden_sol": 1.5,
+      "burden_ib": 1.5,
+      "tox_k": 0.001,
+      "rba_drop": 0.13043478260869565,
+      "fip_drop": 0.14165208715461872,
+      "resid": 0.011217304545923068,
+      "mu_het": null
+    },
+    "secreted": {
+      "ib_frac": 0.05,
+      "burden_sol": 1.5,
+      "burden_ib": 1.5,
+      "tox_k": 0.0,
+      "rba_drop": 0.11894273127753305,
+      "fip_drop": 0.1338880038553929,
+      "resid": 0.014945272577859853,
+      "mu_het": null
+    }
+  }
+}

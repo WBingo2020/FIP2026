@@ -1,0 +1,13 @@
+# 可选依赖：阶段 H 负担系数「真实 RBA / ME 反标定」所需
+# 未安装时 calibrate_burden_rba.py 自动回退到资源分配解析代理（rba_growth_drop_proxy）。
+#
+# 主路径（RBApy，推荐 E.coli / 酵母通用）：
+RBApy>=0.4.0
+# 备选路径（ME-model）：COBRAme 基于 cobra
+# cobra>=0.29.0
+# cobrame>=0.1.0
+
+# 真实标定还需提供宿主 RBA 模型文件，例如：
+#   - E. coli : RBA_Ecoli.xml（RBApy 自带示例）
+#   - S. cerevisiae: RBA_cerevisiae.xml 或 ecYeastGEM 导出的 ME 模型
+# 调用：python -m scripts.calibrate_burden_rba --real-rba --rba-model RBA_Ecoli.xml
