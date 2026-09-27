@@ -193,7 +193,7 @@ def _load_rba_model(model_path: str):
 
 
 def _solve_mu(model) -> float:
-    """求解 RBA 模型并返回最大比生长速率 μ（objective_value）。"""
+    """求解 RBA 模型并返回最大比生长速率 μ（Results.mu_opt）。"""
     try:
         res = model.solve()
     except Exception as e:  # LP 求解器缺失 / 结构不一致 / 合成蛋白组缺 Uniprot
@@ -202,9 +202,12 @@ def _solve_mu(model) -> float:
             "(glpk/cplex)、或模型用合成蛋白组生成（sandbox 无 Uniprot 访问）导致结构不一致。"
             "请在有 Uniprot 网络的机器用 `generate-rba-model` 生成真实模型后重试。"
         ) from e
-    mu = getattr(res, "objective_value", None)
+    # RBApy 的 solve() 返回 rba.utils.results.Results，最优 μ 存在 .mu_opt
+    mu = getattr(res, "mu_opt", None)
     if mu is None:
-        raise RBASolveError("RBA 求解返回无 objective_value（模型不可行/无界）。")
+        mu = getattr(res, "objective_value", None)
+    if mu is None:
+        raise RBASolveError("RBA 求解返回无 μ（模型不可行/无界）。")
     return float(mu)
 
 
@@ -221,9 +224,10 @@ def rba_growth_drop_real(model_path, form, protein_mw_kda, expression_level):
     """
     model = _load_rba_model(model_path)
     mu_wt = _solve_mu(model)
-    # 复制一份带异源表达的模型用于 μ_het（不污染 mu_wt 的 model 引用）
-    _add_heterologous_expression(model, protein_mw_kda, expression_level, form)
-    mu_het = _solve_mu(model)
+    # 注意：base 模型 solve() 会改变其内部状态，必须用【全新加载】的副本构建异源模型，
+    # 否则写盘重载后会继承被污染的状态而不可行。
+    model_het = _add_heterologous_expression(_load_rba_model(model_path), protein_mw_kda, expression_level, form)
+    mu_het = _solve_mu(model_het)
     return max(0.0, (mu_wt - mu_het) / mu_wt)
 
 
@@ -269,12 +273,26 @@ def _add_heterologous_expression(model, protein_mw_kda, expression_level, form):
     eff_level = expression_level
     if form == "intracellular_soluble":
         eff_level = expression_level * (1.0 + TOX_FUTILE_CYCLE_GAIN)
+    # RBApy 的 production target value 必须是【参数 ID】（查 parameters.xml 表），
+    # 不能填裸数字 -> 加一个 constant 函数作等效常量，再在 target 引用其 id。
+    fn_id = "HET_PROD_{}".format(int(round(eff_level * 1000)))
+    from rba.xml import Function  # 小写 rba
+    model.parameters.functions.append(
+        Function(fn_id, "constant", {"CONSTANT": float(eff_level)}, variable="growth_rate")
+    )
     tg = TargetGroup(HET_TARGET_GROUP)
     pf = TargetSpecies(HET_PROTEIN_ID)
-    pf.value = eff_level
+    pf.value = fn_id
     tg.production_fluxes.append(pf)
     model.targets.target_groups.append(tg)
-    return model
+
+    # --- 5. 写盘重载：重建参数表（含新常数函数）后再求解，保证 value 可查表 ---
+    import os as _os
+    import tempfile as _tf
+    _tmp = _tf.mkdtemp(prefix="rba_het_")
+    model.write(_tmp)
+    from rba import RbaModel  # 小写 rba
+    return RbaModel.from_xml(_tmp)
 
 
 def _append_processing_input(processing, species_id):
