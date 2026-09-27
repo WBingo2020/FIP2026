@@ -391,5 +391,987 @@
       },
       "figure": "scan_translation_bottleneck.svg"
     }
+  },
+  "process_overflow": {
+    "schema": "fip.stageH.process_overflow.v5",
+    "note": "工艺约束下的乙酸溢出正向模块（v5，支持葡萄糖/甘油二选一 + 文献基准摄取能力 + 生长率温度依赖 + case-by-case 表达水平扫描）。碳源摄取上限(sub_max)与 DO 氧化容量上限(o2_max)为工艺约束；o2_max 不足以氧化 sub_max 供来的碳时 FBA 在 biomass 目标下分泌乙酸(+甲酸+乙醇)，μ 被氧化容量限制。宿主摄取能力 host_uptake 由 scripts/uptake_capacity.py 给出：文献基准(葡萄糖 10.5 / 甘油 2.5 mmol/gDW/h, 37°C) × 菌株改造因子 × Q10^((T-37)/10)。生长率自身温度依赖——内禀最大生长上限 μ_max(T)作 FBA 目标上界（biomass ub=μ_cap(T)），>40°C 因热失活回落(cardinal 模型)。甘油模型为 e_coli_core补 GLYCt+GLYK+GLYCK 的 e_coli_core_glycerol.xml（葡萄糖-only μ 仍为 1.2917）。本模块现已与动态发酵仿真器 simulate_ecoli 打通（SimRecipe.fba_coupled=True）：把 FBA 的 μ_cap、宿主摄取、μ_het 降幅、乙酸氧化还原 yield 灌入动态仿真的内禀参数，关掉两层各算各的；动态仿真保留时序/诱导/DO 级联。case_by_case 段给出 (形式 × 表达水平) 网格 μ_het（FBA 平行-biomass 下 μ_het 由 f=level×form 决定，与蛋白 MW 无关）。无实测数据时为物理合理默认扫描，待工艺数据回填作校验基准。",
+    "expression_scan": {
+      "level": 0.15,
+      "protein_mw_kda": 30.0,
+      "case_levels": [
+        0.05,
+        0.1,
+        0.15,
+        0.2,
+        0.3
+      ]
+    },
+    "uptake_capacity": {
+      "temperature_C": 37.0,
+      "strain_factor": 1.0,
+      "strain_factor_glucose": 1.0,
+      "strain_factor_glycerol": 1.0,
+      "sources": {
+        "glucose": {
+          "carbon": "glucose",
+          "T_ref_C": 37.0,
+          "T_used_C": 37.0,
+          "v_lit": 10.5,
+          "q10": 2.0,
+          "temp_factor": 1.0,
+          "strain_factor": 1.0,
+          "effective_uptake": 10.5,
+          "source": {
+            "v_lit": 10.5,
+            "ref": "Varma & Palsson (1994), aerobic max glucose uptake; recast in Processes 14:1659 (2026)",
+            "alt": "15 mmol/gDW/h typical excess-glucose batch (PNAS 118:e2013836118); 6.5–8.5 steady-state glucose-limited (Wiley Metabolite flux profiling)",
+            "q10": 2.0,
+            "q10_ref": "Ea≈50 kJ/mol enzymatic PTS; Q10≈2 generic (Cell Biol by Numbers)"
+          }
+        },
+        "glycerol": {
+          "carbon": "glycerol",
+          "T_ref_C": 37.0,
+          "T_used_C": 37.0,
+          "v_lit": 2.5,
+          "q10": 1.9,
+          "temp_factor": 1.0,
+          "strain_factor": 1.0,
+          "effective_uptake": 2.5,
+          "source": {
+            "v_lit": 2.5,
+            "ref": "GlpF/GlpK Vmax 25–40 nmol/min/mgDW = 1.5–2.4 mmol/gDW/h (Orjuela et al. 2020, via Metabeng)",
+            "alt": "glycerol weak carbon source, ~1/4–1/5 of glucose capacity",
+            "q10": 1.9,
+            "q10_ref": "GLYK kinase-limited (Ea≈50 kJ/mol); GlpF pore Ea 4.5 kcal/mol (Maurel 1994 JBC)"
+          }
+        }
+      }
+    },
+    "growth_temperature": {
+      "temperature_C": 37.0,
+      "mu_ref_37": 1.3,
+      "q10_mu": 2.2,
+      "T_min": 4.0,
+      "T_opt": 40.0,
+      "T_max": 46.0,
+      "growth_temperature_factor": 1.0,
+      "mu_cap": 1.3,
+      "model": "μ_max(T) = μ_ref_37 × cardinal(T);  T<=T_opt: Q10^((T-37)/10);  T_opt<T<T_max: 线性衰减到 0 @ T_max;  T<=T_min 或 T>=T_max: μ=0（生长停止）",
+      "figure": "growth_temperature_dependence.svg",
+      "source": "Ratkowsky (1983) square-root / Arrhenius growth (Q10≈2–2.5, Ea≈50–70 kJ/mol); Rosso et al. (1993) cardinal temperatures E. coli (Tmin≈4–8, Topt≈39–40, Tmax≈46–48 °C); Cell Biol by Numbers BNID 100919."
+    },
+    "carbon_sources": {
+      "glucose": {
+        "config": {
+          "exch": "EX_glc__D_e",
+          "host_uptake": 10.5,
+          "default_sub": 15.0,
+          "problem_o2": 8.0,
+          "carbon_per_mol": 6
+        },
+        "sweep_o2_limited": [
+          {
+            "o2_max": 2.0,
+            "feasible": true,
+            "mu": 0.436,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 13.9179,
+            "formate": 25.4784,
+            "ethanol": 9.4563,
+            "co2": -0.7789,
+            "acetate_yield": 0.9279
+          },
+          {
+            "o2_max": 3.0,
+            "feasible": true,
+            "mu": 0.4719,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 14.6634,
+            "formate": 25.105,
+            "ethanol": 8.1637,
+            "co2": -0.8432,
+            "acetate_yield": 0.9776
+          },
+          {
+            "o2_max": 4.0,
+            "feasible": true,
+            "mu": 0.5079,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 15.4089,
+            "formate": 24.7317,
+            "ethanol": 6.8711,
+            "co2": -0.9075,
+            "acetate_yield": 1.0273
+          },
+          {
+            "o2_max": 5.0,
+            "feasible": true,
+            "mu": 0.5439,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 16.1544,
+            "formate": 24.3583,
+            "ethanol": 5.5784,
+            "co2": -0.9719,
+            "acetate_yield": 1.077
+          },
+          {
+            "o2_max": 6.0,
+            "feasible": true,
+            "mu": 0.5799,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 16.8999,
+            "formate": 23.985,
+            "ethanol": 4.2858,
+            "co2": -1.0362,
+            "acetate_yield": 1.1267
+          },
+          {
+            "o2_max": 8.0,
+            "feasible": true,
+            "mu": 0.6519,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 18.3909,
+            "formate": 23.2383,
+            "ethanol": 1.7006,
+            "co2": -1.1648,
+            "acetate_yield": 1.2261
+          },
+          {
+            "o2_max": 10.0,
+            "feasible": true,
+            "mu": 0.7215,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 18.6877,
+            "formate": 22.1703,
+            "ethanol": 0.0,
+            "co2": -0.251,
+            "acetate_yield": 1.2458
+          },
+          {
+            "o2_max": 15.0,
+            "feasible": true,
+            "mu": 0.884,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 14.038,
+            "formate": 16.5643,
+            "ethanol": 0.0,
+            "co2": 7.7399,
+            "acetate_yield": 0.9359
+          },
+          {
+            "o2_max": 20.0,
+            "feasible": true,
+            "mu": 1.0465,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 11.1042,
+            "formate": 4.0948,
+            "ethanol": 0.0,
+            "co2": 19.1625,
+            "acetate_yield": 0.7403
+          },
+          {
+            "o2_max": 30.0,
+            "feasible": true,
+            "mu": 1.2917,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 1.7684,
+            "formate": 0.0,
+            "ethanol": 0.0,
+            "co2": 31.4934,
+            "acetate_yield": 0.1179
+          }
+        ],
+        "sweep_sub_limited": [
+          {
+            "sub_max": 3.0,
+            "feasible": true,
+            "mu": 0.2323,
+            "mu_cap": 1.3,
+            "substrate_consumed": 3.0,
+            "acetate": 0.0,
+            "formate": 0.0,
+            "ethanol": 0.0,
+            "co2": 8.1157,
+            "acetate_yield": 0.0
+          },
+          {
+            "sub_max": 5.0,
+            "feasible": true,
+            "mu": 0.3276,
+            "mu_cap": 1.3,
+            "substrate_consumed": 5.0,
+            "acetate": 3.8401,
+            "formate": 0.0,
+            "ethanol": 0.0,
+            "co2": 8.3787,
+            "acetate_yield": 0.768
+          },
+          {
+            "sub_max": 7.0,
+            "feasible": true,
+            "mu": 0.3966,
+            "mu_cap": 1.3,
+            "substrate_consumed": 7.0,
+            "acetate": 6.8395,
+            "formate": 5.9728,
+            "ethanol": 0.0,
+            "co2": 5.4721,
+            "acetate_yield": 0.9771
+          },
+          {
+            "sub_max": 10.0,
+            "feasible": true,
+            "mu": 0.4941,
+            "mu_cap": 1.3,
+            "substrate_consumed": 10.0,
+            "acetate": 11.6847,
+            "formate": 14.0693,
+            "ethanol": 0.0,
+            "co2": 1.5365,
+            "acetate_yield": 1.1685
+          },
+          {
+            "sub_max": 12.0,
+            "feasible": true,
+            "mu": 0.5591,
+            "mu_cap": 1.3,
+            "substrate_consumed": 12.0,
+            "acetate": 15.2855,
+            "formate": 17.9839,
+            "ethanol": 0.0,
+            "co2": -0.3456,
+            "acetate_yield": 1.2738
+          },
+          {
+            "sub_max": 15.0,
+            "feasible": true,
+            "mu": 0.6519,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 18.3909,
+            "formate": 23.2383,
+            "ethanol": 1.7006,
+            "co2": -1.1648,
+            "acetate_yield": 1.2261
+          },
+          {
+            "sub_max": 18.0,
+            "feasible": true,
+            "mu": 0.7433,
+            "mu_cap": 1.3,
+            "substrate_consumed": 18.0,
+            "acetate": 20.7449,
+            "formate": 28.2905,
+            "ethanol": 3.9578,
+            "co2": -1.3281,
+            "acetate_yield": 1.1525
+          },
+          {
+            "sub_max": 20.0,
+            "feasible": true,
+            "mu": 0.8042,
+            "mu_cap": 1.3,
+            "substrate_consumed": 20.0,
+            "acetate": 22.3143,
+            "formate": 31.6587,
+            "ethanol": 5.4627,
+            "co2": -1.4369,
+            "acetate_yield": 1.1157
+          }
+        ],
+        "heterologous_under_process": {
+          "intracellular_soluble": {
+            "f": 0.18,
+            "protein_mw_kda": 30.0,
+            "mu_ideal_fba": 0.740611,
+            "mu_wt": 0.6519,
+            "mu_het": 0.5525,
+            "acetate_wt": 18.3909,
+            "acetate_het": 18.3909,
+            "d_ac": 0.0
+          },
+          "inclusion_body": {
+            "f": 0.12,
+            "protein_mw_kda": 30.0,
+            "mu_ideal_fba": 0.780287,
+            "mu_wt": 0.6519,
+            "mu_het": 0.5821,
+            "acetate_wt": 18.3909,
+            "acetate_het": 18.3909,
+            "d_ac": 0.0
+          },
+          "periplasmic": {
+            "f": 0.15,
+            "protein_mw_kda": 30.0,
+            "mu_ideal_fba": 0.759932,
+            "mu_wt": 0.6519,
+            "mu_het": 0.5669,
+            "acetate_wt": 18.3909,
+            "acetate_het": 18.3909,
+            "d_ac": 0.0
+          },
+          "secreted": {
+            "f": 0.135,
+            "protein_mw_kda": 30.0,
+            "mu_ideal_fba": 0.769975,
+            "mu_wt": 0.6519,
+            "mu_het": 0.5744,
+            "acetate_wt": 18.3909,
+            "acetate_het": 18.3909,
+            "d_ac": 0.0
+          }
+        },
+        "case_by_case": [
+          {
+            "form": "intracellular_soluble",
+            "levels": {
+              "0.05": {
+                "f": 0.06,
+                "mu_wt": 0.6519,
+                "mu_het": 0.615,
+                "drop": 0.0566,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              },
+              "0.1": {
+                "f": 0.12,
+                "mu_wt": 0.6519,
+                "mu_het": 0.5821,
+                "drop": 0.1071,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              },
+              "0.15": {
+                "f": 0.18,
+                "mu_wt": 0.6519,
+                "mu_het": 0.5525,
+                "drop": 0.1525,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              },
+              "0.2": {
+                "f": 0.24,
+                "mu_wt": 0.6519,
+                "mu_het": 0.5258,
+                "drop": 0.1934,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              },
+              "0.3": {
+                "f": 0.36,
+                "mu_wt": 0.6519,
+                "mu_het": 0.4794,
+                "drop": 0.2646,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              }
+            }
+          },
+          {
+            "form": "inclusion_body",
+            "levels": {
+              "0.05": {
+                "f": 0.04,
+                "mu_wt": 0.6519,
+                "mu_het": 0.6269,
+                "drop": 0.0383,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              },
+              "0.1": {
+                "f": 0.08,
+                "mu_wt": 0.6519,
+                "mu_het": 0.6036,
+                "drop": 0.0741,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              },
+              "0.15": {
+                "f": 0.12,
+                "mu_wt": 0.6519,
+                "mu_het": 0.5821,
+                "drop": 0.1071,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              },
+              "0.2": {
+                "f": 0.16,
+                "mu_wt": 0.6519,
+                "mu_het": 0.562,
+                "drop": 0.1379,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              },
+              "0.3": {
+                "f": 0.24,
+                "mu_wt": 0.6519,
+                "mu_het": 0.5258,
+                "drop": 0.1934,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              }
+            }
+          },
+          {
+            "form": "periplasmic",
+            "levels": {
+              "0.05": {
+                "f": 0.05,
+                "mu_wt": 0.6519,
+                "mu_het": 0.6209,
+                "drop": 0.0476,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              },
+              "0.1": {
+                "f": 0.1,
+                "mu_wt": 0.6519,
+                "mu_het": 0.5927,
+                "drop": 0.0908,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              },
+              "0.15": {
+                "f": 0.15,
+                "mu_wt": 0.6519,
+                "mu_het": 0.5669,
+                "drop": 0.1304,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              },
+              "0.2": {
+                "f": 0.2,
+                "mu_wt": 0.6519,
+                "mu_het": 0.5433,
+                "drop": 0.1666,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              },
+              "0.3": {
+                "f": 0.3,
+                "mu_wt": 0.6519,
+                "mu_het": 0.5015,
+                "drop": 0.2307,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              }
+            }
+          },
+          {
+            "form": "secreted",
+            "levels": {
+              "0.05": {
+                "f": 0.045,
+                "mu_wt": 0.6519,
+                "mu_het": 0.6239,
+                "drop": 0.043,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              },
+              "0.1": {
+                "f": 0.09,
+                "mu_wt": 0.6519,
+                "mu_het": 0.5981,
+                "drop": 0.0825,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              },
+              "0.15": {
+                "f": 0.135,
+                "mu_wt": 0.6519,
+                "mu_het": 0.5744,
+                "drop": 0.1189,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              },
+              "0.2": {
+                "f": 0.18,
+                "mu_wt": 0.6519,
+                "mu_het": 0.5525,
+                "drop": 0.1525,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              },
+              "0.3": {
+                "f": 0.27,
+                "mu_wt": 0.6519,
+                "mu_het": 0.5133,
+                "drop": 0.2126,
+                "acetate_het": 18.3909,
+                "acetate_yield_het": 1.2261
+              }
+            }
+          }
+        ]
+      },
+      "glycerol": {
+        "config": {
+          "exch": "EX_glyc_e",
+          "host_uptake": 2.5,
+          "default_sub": 15.0,
+          "problem_o2": 8.0,
+          "carbon_per_mol": 3
+        },
+        "sweep_o2_limited": [
+          {
+            "o2_max": 2.0,
+            "feasible": true,
+            "mu": 0.1847,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 0.6942,
+            "formate": 13.0843,
+            "ethanol": 11.4986,
+            "co2": -0.33,
+            "acetate_yield": 0.0463
+          },
+          {
+            "o2_max": 3.0,
+            "feasible": true,
+            "mu": 0.2203,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 1.4424,
+            "formate": 12.715,
+            "ethanol": 10.2092,
+            "co2": -0.3936,
+            "acetate_yield": 0.0962
+          },
+          {
+            "o2_max": 4.0,
+            "feasible": true,
+            "mu": 0.2559,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 2.1907,
+            "formate": 12.3457,
+            "ethanol": 8.9197,
+            "co2": -0.4572,
+            "acetate_yield": 0.146
+          },
+          {
+            "o2_max": 5.0,
+            "feasible": true,
+            "mu": 0.2915,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 2.939,
+            "formate": 11.9764,
+            "ethanol": 7.6303,
+            "co2": -0.5209,
+            "acetate_yield": 0.1959
+          },
+          {
+            "o2_max": 6.0,
+            "feasible": true,
+            "mu": 0.3271,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 3.6873,
+            "formate": 11.6071,
+            "ethanol": 6.3409,
+            "co2": -0.5845,
+            "acetate_yield": 0.2458
+          },
+          {
+            "o2_max": 8.0,
+            "feasible": true,
+            "mu": 0.3983,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 5.1838,
+            "formate": 10.8685,
+            "ethanol": 3.762,
+            "co2": -0.7117,
+            "acetate_yield": 0.3456
+          },
+          {
+            "o2_max": 10.0,
+            "feasible": true,
+            "mu": 0.4695,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 6.6804,
+            "formate": 10.13,
+            "ethanol": 1.1832,
+            "co2": -0.8389,
+            "acetate_yield": 0.4454
+          },
+          {
+            "o2_max": 15.0,
+            "feasible": true,
+            "mu": 0.6288,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 5.0072,
+            "formate": -0.0,
+            "ethanol": 0.0,
+            "co2": 8.2269,
+            "acetate_yield": 0.3338
+          },
+          {
+            "o2_max": 20.0,
+            "feasible": true,
+            "mu": 0.7463,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 0.0,
+            "formate": 0.0,
+            "ethanol": 0.0,
+            "co2": 13.2428,
+            "acetate_yield": 0.0
+          },
+          {
+            "o2_max": 30.0,
+            "feasible": true,
+            "mu": 0.7463,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 0.0,
+            "formate": 0.0,
+            "ethanol": 0.0,
+            "co2": 13.2428,
+            "acetate_yield": 0.0
+          }
+        ],
+        "sweep_sub_limited": [
+          {
+            "sub_max": 3.0,
+            "feasible": true,
+            "mu": 0.1163,
+            "mu_cap": 1.3,
+            "substrate_consumed": 3.0,
+            "acetate": 0.0,
+            "formate": 0.0,
+            "ethanol": 0.0,
+            "co2": 4.0499,
+            "acetate_yield": 0.0
+          },
+          {
+            "sub_max": 5.0,
+            "feasible": true,
+            "mu": 0.2213,
+            "mu_cap": 1.3,
+            "substrate_consumed": 5.0,
+            "acetate": 0.0,
+            "formate": 0.0,
+            "ethanol": 0.0,
+            "co2": 5.582,
+            "acetate_yield": 0.0
+          },
+          {
+            "sub_max": 7.0,
+            "feasible": true,
+            "mu": 0.2737,
+            "mu_cap": 1.3,
+            "substrate_consumed": 7.0,
+            "acetate": 2.2684,
+            "formate": 0.0,
+            "ethanol": 0.0,
+            "co2": 4.8164,
+            "acetate_yield": 0.3241
+          },
+          {
+            "sub_max": 10.0,
+            "feasible": true,
+            "mu": 0.328,
+            "mu_cap": 1.3,
+            "substrate_consumed": 10.0,
+            "acetate": 5.0143,
+            "formate": 5.2646,
+            "ethanol": 0.0,
+            "co2": 0.747,
+            "acetate_yield": 0.5014
+          },
+          {
+            "sub_max": 12.0,
+            "feasible": true,
+            "mu": 0.3573,
+            "mu_cap": 1.3,
+            "substrate_consumed": 12.0,
+            "acetate": 5.4743,
+            "formate": 8.2946,
+            "ethanol": 1.096,
+            "co2": -0.6383,
+            "acetate_yield": 0.4562
+          },
+          {
+            "sub_max": 15.0,
+            "feasible": true,
+            "mu": 0.3983,
+            "mu_cap": 1.3,
+            "substrate_consumed": 15.0,
+            "acetate": 5.1838,
+            "formate": 10.8685,
+            "ethanol": 3.762,
+            "co2": -0.7117,
+            "acetate_yield": 0.3456
+          },
+          {
+            "sub_max": 18.0,
+            "feasible": true,
+            "mu": 0.4394,
+            "mu_cap": 1.3,
+            "substrate_consumed": 18.0,
+            "acetate": 4.8934,
+            "formate": 13.4424,
+            "ethanol": 6.4281,
+            "co2": -0.7851,
+            "acetate_yield": 0.2719
+          },
+          {
+            "sub_max": 20.0,
+            "feasible": true,
+            "mu": 0.4668,
+            "mu_cap": 1.3,
+            "substrate_consumed": 20.0,
+            "acetate": 4.6998,
+            "formate": 15.1584,
+            "ethanol": 8.2055,
+            "co2": -0.834,
+            "acetate_yield": 0.235
+          }
+        ],
+        "heterologous_under_process": {
+          "intracellular_soluble": {
+            "f": 0.18,
+            "protein_mw_kda": 30.0,
+            "mu_ideal_fba": 0.740611,
+            "mu_wt": 0.3983,
+            "mu_het": 0.3376,
+            "acetate_wt": 5.1838,
+            "acetate_het": 5.1838,
+            "d_ac": 0.0
+          },
+          "inclusion_body": {
+            "f": 0.12,
+            "protein_mw_kda": 30.0,
+            "mu_ideal_fba": 0.780287,
+            "mu_wt": 0.3983,
+            "mu_het": 0.3557,
+            "acetate_wt": 5.1838,
+            "acetate_het": 5.1838,
+            "d_ac": 0.0
+          },
+          "periplasmic": {
+            "f": 0.15,
+            "protein_mw_kda": 30.0,
+            "mu_ideal_fba": 0.759932,
+            "mu_wt": 0.3983,
+            "mu_het": 0.3464,
+            "acetate_wt": 5.1838,
+            "acetate_het": 5.1838,
+            "d_ac": 0.0
+          },
+          "secreted": {
+            "f": 0.135,
+            "protein_mw_kda": 30.0,
+            "mu_ideal_fba": 0.769975,
+            "mu_wt": 0.3983,
+            "mu_het": 0.351,
+            "acetate_wt": 5.1838,
+            "acetate_het": 5.1838,
+            "d_ac": 0.0
+          }
+        },
+        "case_by_case": [
+          {
+            "form": "intracellular_soluble",
+            "levels": {
+              "0.05": {
+                "f": 0.06,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3758,
+                "drop": 0.0565,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              },
+              "0.1": {
+                "f": 0.12,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3557,
+                "drop": 0.107,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              },
+              "0.15": {
+                "f": 0.18,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3376,
+                "drop": 0.1524,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              },
+              "0.2": {
+                "f": 0.24,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3212,
+                "drop": 0.1936,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              },
+              "0.3": {
+                "f": 0.36,
+                "mu_wt": 0.3983,
+                "mu_het": 0.2929,
+                "drop": 0.2646,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              }
+            }
+          },
+          {
+            "form": "inclusion_body",
+            "levels": {
+              "0.05": {
+                "f": 0.04,
+                "mu_wt": 0.3983,
+                "mu_het": 0.383,
+                "drop": 0.0384,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              },
+              "0.1": {
+                "f": 0.08,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3688,
+                "drop": 0.0741,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              },
+              "0.15": {
+                "f": 0.12,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3557,
+                "drop": 0.107,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              },
+              "0.2": {
+                "f": 0.16,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3434,
+                "drop": 0.1378,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              },
+              "0.3": {
+                "f": 0.24,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3212,
+                "drop": 0.1936,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              }
+            }
+          },
+          {
+            "form": "periplasmic",
+            "levels": {
+              "0.05": {
+                "f": 0.05,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3794,
+                "drop": 0.0475,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              },
+              "0.1": {
+                "f": 0.1,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3621,
+                "drop": 0.0909,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              },
+              "0.15": {
+                "f": 0.15,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3464,
+                "drop": 0.1303,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              },
+              "0.2": {
+                "f": 0.2,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3319,
+                "drop": 0.1667,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              },
+              "0.3": {
+                "f": 0.3,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3064,
+                "drop": 0.2307,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              }
+            }
+          },
+          {
+            "form": "secreted",
+            "levels": {
+              "0.05": {
+                "f": 0.045,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3812,
+                "drop": 0.0429,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              },
+              "0.1": {
+                "f": 0.09,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3654,
+                "drop": 0.0826,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              },
+              "0.15": {
+                "f": 0.135,
+                "mu_wt": 0.3983,
+                "mu_het": 0.351,
+                "drop": 0.1188,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              },
+              "0.2": {
+                "f": 0.18,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3376,
+                "drop": 0.1524,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              },
+              "0.3": {
+                "f": 0.27,
+                "mu_wt": 0.3983,
+                "mu_het": 0.3137,
+                "drop": 0.2124,
+                "acetate_het": 5.1838,
+                "acetate_yield_het": 0.3456
+              }
+            }
+          }
+        ]
+      }
+    },
+    "figures": {
+      "overflow_scan": "process_overflow_scan.svg",
+      "growth_temperature": "growth_temperature_dependence.svg"
+    }
   }
 }
