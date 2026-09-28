@@ -355,3 +355,306 @@ def simulate_ecoli(
 def od600_from_dcw(dcw_g_l: float, host: str = "ecoli") -> float:
     """OD600 ≈ DCW/0.35（E. coli 线性近似）。"""
     return dcw_g_l / 0.35
+
+
+# ===========================================================================
+# 毕赤酵母（Pichia pastoris）高密度补料分批：甘油生长 + 组成型/诱导型表达
+# 与 scripts/ferment_sim.js 的 simulatePichia 逐位一致；FBA 耦合用
+# scripts/calibrate_burden_pichia 的 iPP668 平行 biomass Oracle（drop ≡1/(1+f)）。
+# ===========================================================================
+C_STAR_AIR = 0.25   # mmol/L 饱和 DO（空气, 1bar, ~28-37°C 近似）；与 E. coli 同基准
+
+
+@dataclass
+class PichiaParams:
+    # 文献锚定（FBA 耦合时 μ_max 被替换为 MU_REF_P，Yxs 对齐 FBA 参考值）
+    mu_max_gly: float = 0.28        # 1/h 甘油野生型（实现值；FBA 时改 MU_REF_P_GLY=0.20）
+    mu_max_meoh: float = 0.14       # 1/h 甲醇野生型（FBA 时改 MU_REF_P_MEOM=0.12）
+    ks_gly: float = 0.08            # g/L
+    ks_meoh: float = 0.25           # g/L
+    yxs_gly: float = 0.50           # gX/gS
+    yxs_meoh: float = 0.42          # gX/gS
+    q_p_max: float = 0.004          # gP/gX/h
+    q_meoh_maint: float = 0.03      # 1/h AOX 维持甲醇耗
+    ki_meoh: float = 4.0            # g/L 甲醇抑制常数
+    qo2_growth: float = 10.0        # mmol O2/gX 生长相关
+    mo2: float = 1.2                # mmol O2/gX/h 维持
+    o2_per_g_meoh: float = 46.9     # mmol O2 / g 甲醇（甲醇完全氧化高耗氧）
+    c_star_mm: float = C_STAR_AIR
+
+
+@dataclass
+class PichiaRecipe:
+    host: str = "pichia"
+    batch_volume_l: float = 10.0
+    t_end_h: float = 96.0
+    s0_g_l: float = 20.0            # 甘油批初始 g/L
+    x0_g_l: float = 0.5
+    gly_feed_start_h: float = 18.0
+    gly_feed_end_h: float = 32.0
+    mu_set: float = 0.08            # 1/h 甘油补料设定
+    feed_s_g_l: float = 500.0       # 甘油补料液 g/L
+    meoh_start_h: float = 34.0
+    meoh_feed_rate_lh: float = 0.012  # L/h 甲醇补料
+    meoh_density: float = 0.792
+    temp_pre: float = 28.0
+    ph_set: float = 5.5
+    rpm: float = 900.0
+    airflow_lmin: float = 10.0
+    press_bar: float = 1.0
+    kla_scale: float = 1.0
+    di_m: float = 0.08
+    n_imp: int = 2
+    impeller_type: str = "rushton"
+    rho: float = 1030.0
+    medium: str | None = None
+    ph_curve: list | None = None
+    temp_curve: list | None = None
+    # 阶段 H · 表达负担耦合（与 E. coli 同语义）
+    ib_frac: float = 0.3
+    burden_sol: float = 0.0
+    burden_ib: float = 0.0
+    tox_k: float = 0.0
+    expression_form: str | None = None
+    # 表达模式 / 诱导型补料模式
+    expression_mode: str = "inducible"   # constitutive / inducible
+    meoh_feed_mode: str = "methanol"     # methanol（纯甲醇）/ mixed（甲醇+甘油混合共利用）
+    mixed_gly_feed_g_l: float = 200.0    # 混合补料甘油浓度 g/L
+    mixed_gly_start_h: float = 0.0       # 0 ⇒ 沿用 meoh_start_h
+    mixed_gly_end_h: float = 0.0         # 0 ⇒ 沿用 t_end_h
+    # 阶段 FBA 耦合
+    strain_factor: float = 1.0
+    protein_mw_kda: float = 30.0
+    expression_level: float = 0.15
+    fba_coupled: bool = False
+    fba_temp: float = 28.0
+
+
+@dataclass
+class PichiaTrajectory:
+    t: np.ndarray = field(default_factory=lambda: np.array([]))
+    X: np.ndarray = field(default_factory=lambda: np.array([]))    # g/L DCW
+    S: np.ndarray = field(default_factory=lambda: np.array([]))    # g/L 甘油
+    P: np.ndarray = field(default_factory=lambda: np.array([]))    # g/L 产物
+    M: np.ndarray = field(default_factory=lambda: np.array([]))    # g/L 甲醇
+    Psol: np.ndarray = field(default_factory=lambda: np.array([]))
+    Pib: np.ndarray = field(default_factory=lambda: np.array([]))
+    DO: np.ndarray = field(default_factory=lambda: np.array([]))
+    OUR: np.ndarray = field(default_factory=lambda: np.array([]))
+    CER: np.ndarray = field(default_factory=lambda: np.array([]))
+    RQ: np.ndarray = field(default_factory=lambda: np.array([]))
+    feed: np.ndarray = field(default_factory=lambda: np.array([]))
+    rpm: np.ndarray = field(default_factory=lambda: np.array([]))
+    air: np.ndarray = field(default_factory=lambda: np.array([]))
+    temp: np.ndarray = field(default_factory=lambda: np.array([]))
+    ph: np.ndarray = field(default_factory=lambda: np.array([]))
+    induced: np.ndarray = field(default_factory=lambda: np.array([]))
+    aox: np.ndarray = field(default_factory=lambda: np.array([]))   # 醇氧化酶诱导水平 0..1
+    mode: np.ndarray = field(default_factory=lambda: np.array([]))  # 操作阶段标注
+
+
+def _fba_couple_pichia(rc: "PichiaRecipe", p: "PichiaParams") -> dict:
+    """阶段 FBA 耦合（Pichia）：用 calibrate_burden_pichia 的 iPP668 平行 biomass Oracle 校准。
+    返回 drop_frac(FBA μ_het/μ_wt 降幅)、gtf(Pichia cardinal 温度因子)、feasible，
+    并就地改写 p.mu_max_gly/mu_max_meoh=MU_REF_P、p.yxs=YXS_P。"""
+    from scripts.calibrate_burden_pichia import (  # noqa: E402
+        metrics_pichia, effective_uptake_pichia, growth_temperature_factor_pichia,
+        mu_cap_pichia, MU_REF_P_GLY, MU_REF_P_MEOM, YXS_P, FORM_FACTOR_PICHIA,
+    )
+    carbon = "methanol" if rc.expression_mode == "inducible" else "glycerol"
+    T = rc.fba_temp
+    sf = rc.strain_factor
+    form = rc.expression_form
+    ff = FORM_FACTOR_PICHIA.get(form, 1.0)
+    f = rc.expression_level * ff
+    sub_max = effective_uptake_pichia(carbon, T=T, strain_factor=sf)
+    m = metrics_pichia(carbon, sub_max, 30.0, f=f, T=T)
+    mu_wt = m.get("mu_wt") or 0.0
+    mu_het = m.get("mu_het")
+    drop_frac = (mu_het / mu_wt) if (mu_wt > 0 and mu_het is not None) else 1.0
+    # 内禀参数对齐到 FBA 物理基准（动态仿真每步再乘 cardinal 温度因子 -> μ_cap(步温)）
+    p.mu_max_gly = MU_REF_P_GLY
+    p.mu_max_meoh = MU_REF_P_MEOM
+    p.yxs_gly = YXS_P["glycerol"]
+    p.yxs_meoh = YXS_P["methanol"]
+    return {
+        "carbon": carbon, "T": T, "strain_factor": sf,
+        "drop_frac": drop_frac, "mu_ceiling": mu_cap_pichia(T, carbon),
+        "feasible": bool(m.get("feasible", False)),
+        "gtf": growth_temperature_factor_pichia,   # Pichia cardinal 温度因子
+    }
+
+
+def simulate_pichia(
+    recipe: PichiaRecipe,
+    params: PichiaParams | None = None,
+    dt_h: float = 0.25,
+    noise: float = 0.0,
+    rng: np.random.Generator | None = None,
+) -> PichiaTrajectory:
+    p = params or PichiaParams()
+    rc = recipe
+    from scripts.calibrate_burden_pichia import growth_temperature_factor_pichia  # noqa: E402
+    ib_frac, burden_sol, burden_ib, tox_k = resolve_expression_burden(rc)
+    # 培养基预设（配方仅在仍为默认值时覆盖；机理参数始终覆盖）
+    if rc.medium:
+        _def = PichiaRecipe()
+        for _k, _v in recipe_for_medium("pichia", rc.medium).items():
+            if hasattr(rc, _k) and getattr(rc, _k) == getattr(_def, _k, None):
+                setattr(rc, _k, _v)
+        for _k, _v in params_for_medium("pichia", rc.medium).items():
+            setattr(p, _k, _v)
+
+    expr_mode = rc.expression_mode or "inducible"
+    meoh_mode = rc.meoh_feed_mode or "methanol"
+
+    fba = _fba_couple_pichia(rc, p) if rc.fba_coupled else None
+    FBA_DROP = 1.0
+    if fba is not None:
+        FBA_DROP = fba["drop_frac"]
+        print(f"[FBA-coupled:Pichia] carbon={fba['carbon']} mode={expr_mode} T={fba['T']} "
+              f"strain={fba['strain_factor']}: drop_frac={FBA_DROP:.3f}, "
+              f"mu_ceiling={fba['mu_ceiling']:.3f}/h, feasible={fba['feasible']}")
+
+    rng = rng or np.random.default_rng(7)
+    n = int(rc.t_end_h / dt_h) + 1
+    tr = PichiaTrajectory()
+    tr.t = np.arange(n) * dt_h
+
+    X = rc.x0_g_l
+    S = rc.s0_g_l
+    M = 0.0
+    P = Psol = Pib = 0.0
+    vol = rc.batch_volume_l
+    aox = 0.0
+
+    arrs = {k: np.zeros(n) for k in
+            ("X", "S", "P", "M", "Psol", "Pib", "DO", "OUR", "CER", "RQ",
+             "feed", "rpm", "air", "temp", "ph", "induced", "aox", "mode")}
+
+    vvm = rc.airflow_lmin / rc.batch_volume_l
+
+    for i, t in enumerate(tr.t):
+        on_meoh = (expr_mode == "inducible") and (t >= rc.meoh_start_h)
+        temp = _interp_curve(rc.temp_curve, t, rc.temp_pre)
+        ph = _interp_curve(rc.ph_curve, t, rc.ph_set)
+        # Pichia cardinal 温度因子（FBA 与否同基准）；T 出温区 -> 0
+        f_temp = growth_temperature_factor_pichia(temp) if fba is not None else _pichia_temp_factor(temp)
+        f_ph = 1.0 if abs(ph - rc.ph_set) < 0.3 else math.exp(-0.30 * abs(ph - rc.ph_set))
+        if on_meoh and M > 0.1:
+            aox = min(aox + 0.12 * dt_h, 1.0)
+        elif not on_meoh:
+            aox = max(aox - 0.05 * dt_h, 0.0)
+
+        # 甘油补料：组成型全程；诱导型仅 meoh 前
+        gly_feed_active = (t >= rc.gly_feed_start_h and t < rc.gly_feed_end_h and X > 0.5)
+        f_gly = (rc.mu_set * X * vol / p.yxs_gly) / rc.feed_s_g_l if gly_feed_active else 0.0
+        feed_gly_g = f_gly * rc.feed_s_g_l / vol
+
+        # 甲醇补料（仅诱导型）
+        f_meoh = rc.meoh_feed_rate_lh if on_meoh else 0.0
+        feed_meoh_g = f_meoh * rc.meoh_density * 1000.0 / vol
+
+        # 诱导型 · 甲醇+甘油混合补料（共利用）
+        if expr_mode == "inducible" and meoh_mode == "mixed" and on_meoh:
+            mg_start = rc.mixed_gly_start_h if rc.mixed_gly_start_h > 0 else rc.meoh_start_h
+            mg_end = rc.mixed_gly_end_h if rc.mixed_gly_end_h > 0 else rc.t_end_h
+            if t >= mg_start and t < mg_end and X > 0.5:
+                f_gly_mix = (rc.mu_set * 0.6 * X * vol / p.yxs_gly) / rc.mixed_gly_feed_g_l
+                feed_gly_g += f_gly_mix * rc.mixed_gly_feed_g_l / vol
+
+        monod_g = S / (p.ks_gly + S) if S > 0 else 0.0
+        avail_g = S / dt_h + feed_gly_g
+        growth_g = min(p.mu_max_gly * f_temp * f_ph * monod_g * X, avail_g * p.yxs_gly)
+        uptake_g = growth_g / p.yxs_gly + 0.015 * X
+
+        meoh_inhib = 1.0 / (1.0 + M / p.ki_meoh)
+        monod_m = M / (p.ks_meoh + M) if M > 0 else 0.0
+        avail_m = M / dt_h + feed_meoh_g
+        growth_m = min(p.mu_max_meoh * f_temp * f_ph * aox * monod_m * meoh_inhib * X, avail_m * p.yxs_meoh)
+        maint_meoh = p.q_meoh_maint * aox * X if on_meoh else 0.0
+        cons_meoh = min(growth_m / p.yxs_meoh + maint_meoh, avail_m)
+
+        growth = growth_g + growth_m
+        expr_active = 1.0 if (expr_mode == "constitutive" or on_meoh) else 0.0
+        q_p = p.q_p_max * f_temp * f_ph * (aox if expr_mode == "inducible" else 1.0) * expr_active
+
+        # 阶段 H · 产物分叉 + 表达负担 + 可溶毒性
+        burden_eff = burden_sol * (1.0 - ib_frac) + burden_ib * ib_frac
+        d_psol = (1.0 - ib_frac) * q_p * X
+        d_pib = ib_frac * q_p * X
+        # FBA 耦合：表达负担用 FBA μ_het 降幅 drop_frac 直接压表达相生长（关掉内生负担）；
+        # 甲醇 DO 受限溢出（甲醛毒性）由动态层 ki_meoh 处理（FBA 表 yac=0）。
+        growth_eff = growth * FBA_DROP if (fba is not None and expr_active) else growth
+        dX = growth_eff - 0.008 * X - (0.0 if fba is not None else burden_eff * q_p * X) - tox_k * Psol * X
+        dS = feed_gly_g - uptake_g
+        dM = feed_meoh_g - cons_meoh
+        dP = d_psol + d_pib
+
+        X = max(X + dX * dt_h, 0.0)
+        S = max(S + dS * dt_h, 0.0)
+        M = max(M + dM * dt_h, 0.0)
+        P = max(P + dP * dt_h, 0.0)
+        Psol = max(Psol + d_psol * dt_h, 0.0)
+        Pib = max(Pib + d_pib * dt_h, 0.0)
+        vol += (f_gly + f_meoh) * dt_h
+
+        mu_eff = growth / X if X > 1e-9 else 0.0
+        our = X * (p.qo2_growth * mu_eff + p.mo2)
+        our += (cons_meoh - growth_m / p.yxs_meoh) * p.o2_per_g_meoh
+        rq = (0.75 - 0.05 * aox) if on_meoh else 1.0
+        cer = max(our * rq, 0.0)
+
+        rpm, air, o2_frac = rc.rpm, rc.airflow_lmin, 0.21
+        do_sat = 100.0
+        for _ in range(3):
+            pv_w = power_per_volume_w_m3(rpm, rc.di_m, rc.impeller_type, vol, rc.n_imp, rc.rho)
+            kla = rc.kla_scale * kla_h(pv_w, vvm)
+            c_star = p.c_star_mm * (o2_frac / 0.21) * rc.press_bar
+            c_l = max(c_star - our / kla, 0.0)
+            do_sat = min(max(c_l / c_star * 100.0, 0.0), 100.0)
+            if do_sat >= 25.0 or rpm >= rc.rpm * 1.6:
+                break
+            rpm = min(rpm * 1.2, rc.rpm * 1.6)
+            o2_frac = min(o2_frac + 0.15, 0.95)
+
+        # 操作阶段标注（mode 数组为数值编码，与 JS arrs.MODE 一致）
+        if expr_mode == "constitutive":
+            phase = "gly_bat" if t < rc.gly_feed_start_h else "gly_feed"
+        elif t < rc.meoh_start_h:
+            phase = "gly_feed" if t < rc.gly_feed_end_h else "starv"
+        else:
+            phase = "mix_feed" if meoh_mode == "mixed" else "meoh_induce"
+        _PHASE_CODE = {"gly_bat": 0.0, "gly_feed": 1.0, "starv": 2.0,
+                       "meoh_induce": 3.0, "mix_feed": 4.0}
+        phase_code = _PHASE_CODE.get(phase, 1.0)
+
+        def nz(v: float, rel: float | None = None) -> float:
+            r = noise if rel is None else rel
+            return float(v * (1 + rng.normal(0, r))) if r > 0 else float(v)
+
+        arrs["X"][i], arrs["S"][i], arrs["P"][i] = X, S, P
+        arrs["M"][i], arrs["Psol"][i], arrs["Pib"][i] = M, Psol, Pib
+        arrs["DO"][i] = max(min(nz(do_sat, noise * 0.3), 100.0), 0.0)
+        arrs["OUR"][i], arrs["CER"][i], arrs["RQ"][i] = nz(our), nz(cer, noise * 0.5), nz(rq, noise * 0.5)
+        arrs["feed"][i], arrs["rpm"][i], arrs["air"][i] = f_meoh, rpm, air
+        arrs["temp"][i], arrs["ph"][i] = nz(temp), nz(ph)
+        arrs["induced"][i], arrs["aox"][i], arrs["mode"][i] = (1.0 if on_meoh else 0.0), aox, phase_code
+
+    for k, v in arrs.items():
+        setattr(tr, k, v)
+    return tr
+
+
+def _pichia_temp_factor(T: float) -> float:
+    """非 FBA 耦合时的 Pichia 温度因子（对称惩罚，±2°C 内等效，超出 exp 衰减）。"""
+    if abs(T - 28.0) <= 2.0:
+        return 1.0
+    return math.exp(-0.10 * (abs(T - 28.0) - 2.0))
+
+
+def simulate(recipe, params=None, dt_h=0.25, noise=0.0, rng=None):
+    """host 派发：PichiaRecipe -> simulate_pichia；SimRecipe -> simulate_ecoli。"""
+    if isinstance(recipe, PichiaRecipe):
+        return simulate_pichia(recipe, params, dt_h, noise, rng)
+    return simulate_ecoli(recipe, params, dt_h, noise, rng)

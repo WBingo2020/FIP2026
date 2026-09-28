@@ -1,3 +1,11 @@
+__pycache__/
+*.pyc
+.env
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+
 # 生成产物 / 验证图 / 预览（非源码，不进 PR）
 scripts/rba_models/
 _verify_*.png
@@ -14,3 +22,11 @@ burden_calibration.csv
 # 本地技能下载缓存（非源码，不进 PR）
 _skills/
 _skills_dl/
+
+# Pichia GSM 模型（已发表模型 SBML，共 ~8MB，仅离线重算 fba_coupling_table.json 用；
+# 运行期只用 fba_coupling_table.json，故模型文件不进仓库）
+scripts/pichia_models/
+
+# 临时打包产物
+stage_l_fba_coupling_update.zip
+
